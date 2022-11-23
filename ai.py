@@ -1,4 +1,4 @@
-from ipoly import load
+#from ipoly import load
 import skimage
 import numpy as np
 import skimage.morphology as morph
@@ -6,7 +6,7 @@ from skimage.segmentation import clear_border
 from skimage import filters
 from PIL.Image import fromarray as afficher
 import keras
-from keras.layers import Dense, Conv2D
+from keras.layers import Dense, Conv2D,MaxPooling2D
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
@@ -24,7 +24,6 @@ def croper(image, margin=3):
         max(0, top_left[0] - margin) : bottom_right[0] + 1 + margin,
         max(0, top_left[1] - margin) : bottom_right[1] + 1 + margin,
     ]
-
 
 def prepare_image(image):
     gim = skimage.color.rgb2gray(image)
@@ -81,6 +80,7 @@ def create_model():
         )
     )
     model.add(Conv2D(64, kernel_size=3, padding="same", activation="relu"))
+    model.add(MaxPooling2D(pool_size=(3, 3)))
     model.add(keras.layers.Flatten())
     model.add(Dense(128, activation="relu"))
     model.add(Dense(4, activation="sigmoid"))
@@ -88,17 +88,39 @@ def create_model():
     return model
 
 
-def train_model(X_train, Y_train, model):
-    aug = ImageDataGenerator(rotation_range=25)  # , width_shift_range=0.1,
-    # height_shift_range=0.1, shear_range=0.2, zoom_range=0.2,
-    # horizontal_flip=True, fill_mode="nearest")
+def preprocess_extract_patch():
+    def _preprocess_extract_patch(x):
+        img = prepare_image(x)
+        return img
+    return _preprocess_extract_patch
 
-    batch_size = 2
 
-    x = np.array(X_train)
-    y = np.array(Y_train)
 
-    train_aug = aug.flow(x, y, batch_size=batch_size)
+def train_model( model):
+    df=pd.read_csv("labels.csv")
+
+    df = pd.get_dummies(
+        df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
+    )
+    preprocessing_function = preprocess_extract_patch()
+
+    BATCH_SIZE=5
+
+    train_datagen_aug = ImageDataGenerator(preprocessing_function=preprocessing_function,rotation_range=25)
+    columns=["bord_lisse"	,"phyllotaxie_oppose"	,"typeFeuille_simple"	,"ligneux_oui"]
+    train_generator=train_datagen_aug.flow_from_dataframe(
+    dataframe=df[:5],
+    directory="dataset",
+    x_col="repo",
+    y_col=columns,
+    batch_size=5,
+    seed=42,
+    shuffle=True,
+    class_mode="raw")
+
+
+
+
     callback = [
         keras.callbacks.EarlyStopping(monitor="loss", patience=3),
         keras.callbacks.ModelCheckpoint(
@@ -111,9 +133,9 @@ def train_model(X_train, Y_train, model):
     ]
 
     H = model.fit(
-        train_aug,
-        validation_data=(X_test, Y_test),
-        steps_per_epoch=len(X_train) // batch_size,
+        train_generator,
+        #validation_data=(X_test, Y_test),
+        #steps_per_epoch=len(X_train) // BATCH_SIZE,
         epochs=1,
         verbose=1,
         callbacks=[callback],
