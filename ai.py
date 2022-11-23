@@ -35,8 +35,8 @@ def prepare_image(image: np.array):
     threshold = filters.threshold_otsu(gim)
     binary_mask = gim < threshold
     binary_mask = morph.remove_small_objects(
-        binary_mask, 0.07 * binary_mask.shape[0] * binary_mask.shape[1]
-    )
+        binary_mask, 0.03 * binary_mask.shape[0] * binary_mask.shape[1]
+    )  # réduire le coefficient si le nombre de pixel diminue
     binary_mask_cleared = clear_border(
         skimage.morphology.remove_small_holes(binary_mask, 300)
     )
@@ -103,12 +103,25 @@ def train_model(model):
 
     BATCH_SIZE = 5
 
-    train_datagen_aug = ImageDataGenerator(
+    datagen_aug = ImageDataGenerator(
         preprocessing_function=preprocessing_function, rotation_range=25
     )
+
     columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
-    train_generator = train_datagen_aug.flow_from_dataframe(
-        dataframe=df[:BATCH_SIZE],
+    train_generator = datagen_aug.flow_from_dataframe(
+        dataframe=df[: round(df.shape[0] * 0.8)],
+        directory="dataset",
+        x_col="repo",
+        y_col=columns,
+        batch_size=BATCH_SIZE,
+        seed=42,
+        shuffle=True,
+        class_mode="raw",
+        target_size=(IMAGE_SIZE, IMAGE_SIZE),
+    )
+
+    val_generator = datagen_aug.flow_from_dataframe(
+        dataframe=df[round(df.shape[0] * 0.8) :],
         directory="dataset",
         x_col="repo",
         y_col=columns,
@@ -120,7 +133,7 @@ def train_model(model):
     )
 
     callback = [
-        # keras.callbacks.EarlyStopping(monitor="val_loss", patience=3),
+        keras.callbacks.EarlyStopping(monitor="val_loss", patience=3),
         keras.callbacks.ModelCheckpoint(
             filepath="model_checkpoint",
             save_weights_only=True,
@@ -132,9 +145,9 @@ def train_model(model):
 
     H = model.fit(
         train_generator,
-        # validation_data=(X_test, Y_test),
+        validation_data=val_generator,
         # steps_per_epoch=len(X_train) // BATCH_SIZE,
-        epochs=1,
+        epochs=10,
         verbose=1,
         callbacks=[callback],
     )
