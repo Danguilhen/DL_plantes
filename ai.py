@@ -36,10 +36,21 @@ def prepare_image(image):
     )
     if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
         binary_mask = binary_mask_cleared
-    labeled_image, count = skimage.measure.label(binary_mask, return_num=True)
+    labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
     image[labeled_image == 0] = 255
     img = croper(image)
-    return img
+    scale_percent = min(500 * 100 / img.shape[0], 500 * 100 / img.shape[1])
+    width = int(round(img.shape[1] * scale_percent / 100))
+    height = int(round(img.shape[0] * scale_percent / 100))
+    dim = (width, height)
+    resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    if resized.shape[1] != 500:
+        white = np.full((500, 500 - resized.shape[1], 3), 255, dtype=np.uint8)
+        result = np.concatenate((resized, white), axis=1)
+    else:
+        white = np.full((500 - resized.shape[0], 500, 3), 255, dtype=np.uint8)
+        result = np.concatenate((resized, white), axis=0)
+    return result
 
 
 def prepare_dataset():
@@ -52,18 +63,7 @@ def prepare_dataset():
     for row in df.iterrows():
         print("dataset/" + row[1].repo)
         i = load("dataset/" + row[1].repo)
-        img = prepare_image(i)
-        scale_percent = 500 * 100 / img.shape[0]
-        width = int(round(img.shape[1] * scale_percent / 100))
-        height = int(round(img.shape[0] * scale_percent / 100))
-        dim = (width, height)
-        resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
-        if resized.shape[1] != 500:
-            white = np.full((500, 500 - resized.shape[1], 3), 255, dtype=np.uint8)
-            result = np.concatenate((resized, white), axis=1)
-        else:
-            white = np.full((500 - resized.shape[0], 500, 3), 255, dtype=np.uint8)
-            result = np.concatenate((resized, white), axis=0)
+        result = prepare_image(i)
         Y_train.append(list(row[1][3:7]))
         X_train.append(result)
     return X_train, Y_train
@@ -89,28 +89,32 @@ def create_model():
 
 
 def train_model(X_train, Y_train, model):
-    aug = ImageDataGenerator(
-        rotation_range=25,
-        width_shift_range=0.1,
-        height_shift_range=0.1,
-        shear_range=0.2,
-        zoom_range=0.2,
-        horizontal_flip=True,
-        fill_mode="nearest",
-    )
+    aug = ImageDataGenerator(rotation_range=25)  # , width_shift_range=0.1,
+    # height_shift_range=0.1, shear_range=0.2, zoom_range=0.2,
+    # horizontal_flip=True, fill_mode="nearest")
 
-    batch_size = 32
+    batch_size = 2
 
     x = np.array(X_train)
     y = np.array(Y_train)
 
-    # x = aug.flow(x, y, batch_size=batch_size)
+    train_aug = aug.flow(x, y, batch_size=batch_size)
+    callback = [
+        keras.callbacks.EarlyStopping(monitor="loss", patience=3),
+        keras.callbacks.ModelCheckpoint(
+            filepath="model_checkpoint",
+            save_weights_only=True,
+            monitor="val_accuracy",
+            mode="max",
+            save_best_only=True,
+        ),
+    ]
 
     H = model.fit(
-        x=x,
-        y=y,
-        # validation_data=(X_test, Y_test),
+        train_aug,
+        validation_data=(X_test, Y_test),
         steps_per_epoch=len(X_train) // batch_size,
-        epochs=5,
+        epochs=1,
         verbose=1,
+        callbacks=[callback],
     )
