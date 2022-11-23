@@ -56,14 +56,14 @@ def prepare_dataset():
         scale_percent = 500 * 100 / img.shape[0]
         width = int(round(img.shape[1] * scale_percent / 100))
         height = int(round(img.shape[0] * scale_percent / 100))
-        dim = (250, 250)  # (width, height)
+        dim = (width, height)
         resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
         if resized.shape[1] != 500:
             white = np.full((500, 500 - resized.shape[1], 3), 255, dtype=np.uint8)
-            result = np.concatenate((resized,white), axis=1)
+            result = np.concatenate((resized, white), axis=1)
         else:
             white = np.full((500 - resized.shape[0], 500, 3), 255, dtype=np.uint8)
-            result = np.concatenate((resized,white), axis=0)
+            result = np.concatenate((resized, white), axis=0)
         Y_train.append(list(row[1][3:7]))
         X_train.append(result)
     return X_train, Y_train
