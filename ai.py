@@ -10,6 +10,9 @@ from keras.layers import Dense, Conv2D, MaxPooling2D
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
+import glob
+from typing import Literal
+import re
 
 IMAGE_SIZE = 500
 
@@ -34,9 +37,15 @@ def prepare_image(image: np.array):
     gim = skimage.color.rgb2gray(image)
     threshold = filters.threshold_otsu(gim)
     binary_mask = gim < threshold
-    binary_mask = morph.remove_small_objects(
-        binary_mask, 0.03 * binary_mask.shape[0] * binary_mask.shape[1]
-    )  # réduire le coefficient si le nombre de pixel diminue
+    total = binary_mask.sum()
+    coef = 0.08
+    total_light = 0
+    while total_light < (total*0.5):
+        coef -= 0.01
+        binary_mask_light = morph.remove_small_objects(
+            binary_mask, coef * binary_mask.shape[0] * binary_mask.shape[1]
+        )
+        total_light = binary_mask_light.sum()
     binary_mask_cleared = clear_border(
         skimage.morphology.remove_small_holes(binary_mask, 300)
     )
@@ -93,8 +102,29 @@ def preprocess_extract_patch():
     return _preprocess_extract_patch
 
 
+def prepare_labels(dataset: Literal["Train", "Test"]):
+    data_f=glob.glob("dataset/" + dataset + "/*/*")
+    df=pd.DataFrame([ re.split(r"[/\\]", i)[2:] for i in data_f],columns=["class","imFile"])
+    df["repo"]=[ i[8:] for i in data_f]
+    dict_class={'castanea':["dente","alterne","simple","oui"], 
+    'convolvulaceae':["lisse","alterne","simple","non"],
+    'magnolia':["lisse","alterne","simple","oui"], 
+    'ulmus':["dente","alterne","simple","oui"], 
+    'litsea':["lisse","alterne","simple","oui"],
+    'laurus':["lisse","oppose","simple","oui"], 
+    'monimiaceae':["lisse","oppose","simple","oui"]
+    ,'desmodium':["lisse","alterne","composee","non"], 
+    'amborella':["lisse","alterne","simple","oui"],
+    'eugenia':["lisse","oppose","simple","oui"],
+    'rubus':["dente","alterne","composee","oui"]}
+    for i in dict_class.keys():
+        df.loc[df["class"]==i,["bord",'phyllotaxie',
+            "typeFeuille","ligneux"]]=dict_class[i]
+    df.to_csv(dataset + "_labels.csv",index=False)
+
+
 def train_model(model):
-    df = pd.read_csv("labels.csv")
+    df = pd.read_csv("Train_labels.csv")
 
     df = pd.get_dummies(
         df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
