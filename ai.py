@@ -1,22 +1,26 @@
-# from ipoly import load
 import skimage
 import numpy as np
 import skimage.morphology as morph
 from skimage.segmentation import clear_border
 from skimage import filters
-from PIL.Image import fromarray as afficher
 import keras
-from keras.layers import Dense, Conv2D, MaxPooling2D
+from keras.layers import Dense
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
 import glob
 from typing import Literal
 import re
-from keras.models import Sequential
-from keras.applications import EfficientNetB0
+from keras.applications import EfficientNetB4
+import tensorflow_addons as tfa
+from keras.models import Model
+from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import multilabel_confusion_matrix
 
-IMAGE_SIZE = 224
+IMAGE_SIZE = 128
+BATCH_SIZE = 64
 
 
 def croper(image: np.array, margin: int = 3):
@@ -78,18 +82,19 @@ def prepare_image(image: np.array):
 
 
 def create_model():
-    efficient_net = EfficientNetB0(
-        classes=4,
-        weights="imagenet",
-        include_top=False,
-        input_shape=(224, 224, 3),
-        pooling="max",
+    efficient_net = EfficientNetB4(
+        weights="imagenet", include_top=False, input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3)
     )
-    model = Sequential()
-    model.add(efficient_net)
-    model.add(Dense(units=120, activation="relu"))
-    model.add(Dense(units=120, activation="relu"))
-    model.add(Dense(units=4, activation="sigmoid"))
+    x = efficient_net.output
+    x = Dense(128, activation="relu")(x)
+    x = Dense(64, activation="relu")(x)
+    predictions = Dense(4, activation="sigmoid")(x)
+    model = Model(inputs=efficient_net.input, outputs=predictions)
+    model.compile(
+        optimizer="adam",
+        loss=tfa.losses.SigmoidFocalCrossEntropy(),
+        metrics=["accuracy"],
+    )
 
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
@@ -137,14 +142,15 @@ def train_model(model):
     )
     preprocessing_function = preprocess_extract_patch()
 
-    BATCH_SIZE = 64
-
     datagen_aug = ImageDataGenerator(
-        preprocessing_function=preprocessing_function,
-        rotation_range=90,
+        rescale=1.0 / 255,
+        rotation_range=20,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        zoom_range=0.2,
+        brightness_range=[0.5, 1.5],
         horizontal_flip=True,
         vertical_flip=True,
-        zoom_range=0.2,
     )
 
     columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
@@ -172,6 +178,26 @@ def train_model(model):
         target_size=(IMAGE_SIZE, IMAGE_SIZE),
     )
 
+    test_df = pd.read_csv("Test_labels.csv")
+
+    test_df = pd.get_dummies(
+        test_df,
+        columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"],
+        drop_first=True,
+    )
+
+    test_generator = datagen_aug.flow_from_dataframe(
+        dataframe=test_df,
+        directory="dataset",
+        x_col="repo",
+        y_col=columns,
+        batch_size=BATCH_SIZE,
+        seed=42,
+        shuffle=True,
+        class_mode="raw",
+        target_size=(IMAGE_SIZE, IMAGE_SIZE),
+    )
+
     callbacks = [
         keras.callbacks.EarlyStopping(monitor="val_loss", patience=1),
         keras.callbacks.ModelCheckpoint(
@@ -181,6 +207,12 @@ def train_model(model):
             mode="max",
             save_best_only=True,
         ),
+        ModelCheckpoint(
+            "model.hdf5", save_best_only=True, verbose=0, monitor="val_loss", mode="min"
+        ),
+        ReduceLROnPlateau(
+            monitor="val_loss", factor=0.3, patience=3, min_lr=0.000001, verbose=1
+        ),
     ]
 
     history = model.fit(
@@ -188,5 +220,54 @@ def train_model(model):
         validation_data=val_generator,
         epochs=10,
         verbose=1,
+        steps_per_epoch=train_generator.n / BATCH_SIZE,
         callbacks=[callbacks],
     )
+
+    preds = model.predict(test_generator, steps=test_generator.n / BATCH_SIZE)
+
+    return history, preds
+
+
+def print_confusion_matrix(
+    confusion_matrix, axes, class_label, class_names, fontsize=14
+):
+
+    df_cm = pd.DataFrame(
+        confusion_matrix,
+        index=class_names,
+        columns=class_names,
+    )
+
+    try:
+        heatmap = sns.heatmap(df_cm, annot=True, fmt="d", cbar=False, ax=axes)
+    except ValueError:
+        raise ValueError("Confusion matrix values must be integers.")
+    heatmap.yaxis.set_ticklabels(
+        heatmap.yaxis.get_ticklabels(), rotation=0, ha="right", fontsize=fontsize
+    )
+    heatmap.xaxis.set_ticklabels(
+        heatmap.xaxis.get_ticklabels(), rotation=45, ha="right", fontsize=fontsize
+    )
+    axes.set_ylabel("True label")
+    axes.set_xlabel("Predicted label")
+    axes.set_title("Confusion Matrix for the class - " + class_label)
+
+
+def print_multilabel_confusion_matrix(y_preds):
+    df = pd.read_csv("Test_labels.csv")
+
+    df = pd.get_dummies(
+        df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
+    )
+    y_preds = y_preds.round().astype(np.uint8)
+    y_test = np.array(df.iloc[:, 3:])
+    y_test.shape, y_preds.shape
+    confusion_matrix = multilabel_confusion_matrix(y_test, y_preds)
+    labels = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
+    fig, ax = plt.subplots(2, 2, figsize=(10, 7))
+    for axes, cfs_matrix, label in zip(ax.flatten(), confusion_matrix, labels):
+        print_confusion_matrix(cfs_matrix, axes, label, ["N", "Y"])
+
+    fig.tight_layout()
+    plt.show()
