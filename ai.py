@@ -13,8 +13,10 @@ from keras.preprocessing.image import ImageDataGenerator
 import glob
 from typing import Literal
 import re
+from keras.models import Sequential
+from keras.applications import EfficientNetB0
 
-IMAGE_SIZE = 500
+IMAGE_SIZE = 224
 
 
 def croper(image: np.array, margin: int = 3):
@@ -38,14 +40,15 @@ def prepare_image(image: np.array):
     threshold = filters.threshold_otsu(gim)
     binary_mask = gim < threshold
     total = binary_mask.sum()
-    coef = 0.08
+    coef = 0.06
     total_light = 0
-    while total_light < (total*0.5):
+    while total_light < (total * 0.5):
         coef -= 0.01
         binary_mask_light = morph.remove_small_objects(
             binary_mask, coef * binary_mask.shape[0] * binary_mask.shape[1]
         )
         total_light = binary_mask_light.sum()
+    binary_mask = binary_mask_light
     binary_mask_cleared = clear_border(
         skimage.morphology.remove_small_holes(binary_mask, 300)
     )
@@ -75,22 +78,20 @@ def prepare_image(image: np.array):
 
 
 def create_model():
-    model = keras.models.Sequential()
-    model.add(
-        Conv2D(
-            32,
-            kernel_size=3,
-            padding="same",
-            activation="relu",
-            input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3),
-        )
+    efficient_net = EfficientNetB0(
+        classes=4,
+        weights="imagenet",
+        include_top=False,
+        input_shape=(224, 224, 3),
+        pooling="max",
     )
-    model.add(Conv2D(64, kernel_size=3, padding="same", activation="relu"))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(keras.layers.Flatten())
-    model.add(Dense(128, activation="relu"))
-    model.add(Dense(4, activation="sigmoid"))
-    model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])
+    model = Sequential()
+    model.add(efficient_net)
+    model.add(Dense(units=120, activation="relu"))
+    model.add(Dense(units=120, activation="relu"))
+    model.add(Dense(units=4, activation="sigmoid"))
+
+    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
 
 
@@ -103,24 +104,29 @@ def preprocess_extract_patch():
 
 
 def prepare_labels(dataset: Literal["Train", "Test"]):
-    data_f=glob.glob("dataset/" + dataset + "/*/*")
-    df=pd.DataFrame([ re.split(r"[/\\]", i)[2:] for i in data_f],columns=["class","imFile"])
-    df["repo"]=[ i[8:] for i in data_f]
-    dict_class={'castanea':["dente","alterne","simple","oui"], 
-    'convolvulaceae':["lisse","alterne","simple","non"],
-    'magnolia':["lisse","alterne","simple","oui"], 
-    'ulmus':["dente","alterne","simple","oui"], 
-    'litsea':["lisse","alterne","simple","oui"],
-    'laurus':["lisse","oppose","simple","oui"], 
-    'monimiaceae':["lisse","oppose","simple","oui"]
-    ,'desmodium':["lisse","alterne","composee","non"], 
-    'amborella':["lisse","alterne","simple","oui"],
-    'eugenia':["lisse","oppose","simple","oui"],
-    'rubus':["dente","alterne","composee","oui"]}
+    data_f = glob.glob("dataset/" + dataset + "/*/*")
+    df = pd.DataFrame(
+        [re.split(r"[/\\]", i)[2:] for i in data_f], columns=["class", "imFile"]
+    )
+    df["repo"] = [i[8:] for i in data_f]
+    dict_class = {
+        "castanea": ["dente", "alterne", "simple", "oui"],
+        "convolvulaceae": ["lisse", "alterne", "simple", "non"],
+        "magnolia": ["lisse", "alterne", "simple", "oui"],
+        "ulmus": ["dente", "alterne", "simple", "oui"],
+        "litsea": ["lisse", "alterne", "simple", "oui"],
+        "laurus": ["lisse", "oppose", "simple", "oui"],
+        "monimiaceae": ["lisse", "oppose", "simple", "oui"],
+        "desmodium": ["lisse", "alterne", "composee", "non"],
+        "amborella": ["lisse", "alterne", "simple", "oui"],
+        "eugenia": ["lisse", "oppose", "simple", "oui"],
+        "rubus": ["dente", "alterne", "composee", "oui"],
+    }
     for i in dict_class.keys():
-        df.loc[df["class"]==i,["bord",'phyllotaxie',
-            "typeFeuille","ligneux"]]=dict_class[i]
-    df.to_csv(dataset + "_labels.csv",index=False)
+        df.loc[
+            df["class"] == i, ["bord", "phyllotaxie", "typeFeuille", "ligneux"]
+        ] = dict_class[i]
+    df.to_csv(dataset + "_labels.csv", index=False)
 
 
 def train_model(model):
@@ -131,10 +137,14 @@ def train_model(model):
     )
     preprocessing_function = preprocess_extract_patch()
 
-    BATCH_SIZE = 5
+    BATCH_SIZE = 64
 
     datagen_aug = ImageDataGenerator(
-        preprocessing_function=preprocessing_function, rotation_range=25
+        preprocessing_function=preprocessing_function,
+        rotation_range=90,
+        horizontal_flip=True,
+        vertical_flip=True,
+        zoom_range=0.2,
     )
 
     columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
@@ -162,8 +172,8 @@ def train_model(model):
         target_size=(IMAGE_SIZE, IMAGE_SIZE),
     )
 
-    callback = [
-        keras.callbacks.EarlyStopping(monitor="val_loss", patience=3),
+    callbacks = [
+        keras.callbacks.EarlyStopping(monitor="val_loss", patience=1),
         keras.callbacks.ModelCheckpoint(
             filepath="model_checkpoint",
             save_weights_only=True,
@@ -173,11 +183,10 @@ def train_model(model):
         ),
     ]
 
-    H = model.fit(
+    history = model.fit(
         train_generator,
         validation_data=val_generator,
-        # steps_per_epoch=len(X_train) // BATCH_SIZE,
         epochs=10,
         verbose=1,
-        callbacks=[callback],
+        callbacks=[callbacks],
     )
