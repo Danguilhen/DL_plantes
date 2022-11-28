@@ -4,7 +4,7 @@ import skimage.morphology as morph
 from skimage.segmentation import clear_border
 from skimage import filters
 import keras
-from keras.layers import Dense
+from keras.layers import Dense, GlobalAveragePooling2D
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
@@ -18,8 +18,9 @@ from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import multilabel_confusion_matrix
+from sklearn.utils import class_weight
 
-IMAGE_SIZE = 128
+IMAGE_SIZE = 230
 BATCH_SIZE = 64
 
 
@@ -85,7 +86,9 @@ def create_model():
     efficient_net = EfficientNetB4(
         weights="imagenet", include_top=False, input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3)
     )
+    efficient_net.trainable = False
     x = efficient_net.output
+    x = GlobalAveragePooling2D()(x)
     x = Dense(128, activation="relu")(x)
     x = Dense(64, activation="relu")(x)
     predictions = Dense(4, activation="sigmoid")(x)
@@ -102,7 +105,7 @@ def create_model():
 
 def preprocess_extract_patch():
     def _preprocess_extract_patch(x):
-        img = prepare_image(x.astype(np.uint8))
+        img = prepare_image(x)
         return img
 
     return _preprocess_extract_patch
@@ -140,17 +143,17 @@ def train_model(model):
     df = pd.get_dummies(
         df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
     )
-    preprocessing_function = preprocess_extract_patch()
 
     datagen_aug = ImageDataGenerator(
+        preprocessing_function=preprocess_extract_patch(),
         rescale=1.0 / 255,
-        rotation_range=20,
-        width_shift_range=0.2,
-        height_shift_range=0.2,
-        zoom_range=0.2,
-        brightness_range=[0.5, 1.5],
-        horizontal_flip=True,
-        vertical_flip=True,
+        # rotation_range=20,
+        # width_shift_range=0.2,
+        # height_shift_range=0.2,
+        # zoom_range=0.2,
+        # brightness_range=[0.5, 1.5],
+        # horizontal_flip=True,
+        # vertical_flip=True,
     )
 
     columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
@@ -199,7 +202,7 @@ def train_model(model):
     )
 
     callbacks = [
-        keras.callbacks.EarlyStopping(monitor="val_loss", patience=1),
+        keras.callbacks.EarlyStopping(monitor="val_loss", patience=5),
         keras.callbacks.ModelCheckpoint(
             filepath="model_checkpoint",
             save_weights_only=True,
