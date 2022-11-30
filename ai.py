@@ -137,12 +137,14 @@ def prepare_labels(dataset: Literal["Train", "Test"]):
     df.to_csv(dataset + "_labels.csv", index=False)
 
 
-def train_model(model):
+def train_model(model,isMacOs=False):
     df = pd.read_csv("Train_labels.csv")
 
     df = pd.get_dummies(
         df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
     )
+    if isMacOs : 
+        df.repo=df.repo.str.replace("\\","/")
 
     datagen_aug = ImageDataGenerator(
         preprocessing_function=preprocess_extract_patch(),
@@ -188,6 +190,8 @@ def train_model(model):
         columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"],
         drop_first=True,
     )
+    if isMacOs : 
+        test_df.repo=test_df.repo.str.replace("\\","/")
 
     test_generator = datagen_aug.flow_from_dataframe(
         dataframe=test_df,
