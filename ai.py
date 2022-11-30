@@ -4,7 +4,7 @@ import skimage.morphology as morph
 from skimage.segmentation import clear_border
 from skimage import filters
 import keras
-from keras.layers import Dense, GlobalAveragePooling2D
+from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
@@ -19,9 +19,14 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import multilabel_confusion_matrix
 from sklearn.utils import class_weight
+from keras import backend as K
+import tensorflow as tf 
+from sklearn.model_selection import train_test_split
+from keras.applications.densenet import DenseNet121
 
-IMAGE_SIZE = 230
-BATCH_SIZE = 64
+IMAGE_SIZE = 320
+BATCH_SIZE = 8
+
 
 
 def croper(image: np.array, margin: int = 3):
@@ -83,23 +88,33 @@ def prepare_image(image: np.array):
 
 
 def create_model():
-    efficient_net = EfficientNetB4(
-        weights="imagenet", include_top=False, input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3)
+    efficient_net = DenseNet121(#EfficientNetB4(
+        weights=None, include_top=False, input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3)
     )
-    efficient_net.trainable = False
+    #efficient_net.trainable = False
     x = efficient_net.output
-    x = GlobalAveragePooling2D()(x)
-    x = Dense(128, activation="relu")(x)
-    x = Dense(64, activation="relu")(x)
-    predictions = Dense(4, activation="sigmoid")(x)
-    model = Model(inputs=efficient_net.input, outputs=predictions)
-    model.compile(
-        optimizer="adam",
-        loss=tfa.losses.SigmoidFocalCrossEntropy(),
-        metrics=["accuracy"],
-    )
+    #x = GlobalAveragePooling2D()(x)
+    #x = Dense(128, activation="relu")(x)
+    #x = Dense(64, activation="relu")(x)
+    x= GlobalAveragePooling2D()(x)
+    x= BatchNormalization()(x)
+    x= Dropout(0.5)(x)
+    x= Dense(1024,activation='relu')(x) 
+    x= Dense(512,activation='relu')(x) 
+    x= BatchNormalization()(x)
+    x= Dropout(0.5)(x)
+    preds=Dense(4,activation='softmax')(x)
+    model = Model(inputs=efficient_net.input, outputs=preds)
+#
+    model.load_weights("DenseNet121.h5")
+    predictions = Dense(4, activation="sigmoid")(model.layers[-2].output)
+    model = Model(inputs=model.input, outputs=predictions)
+    for layer in model.layers[:-8]:
+        layer.trainable=False
+    for layer in model.layers[-8:]:
+        layer.trainable=True
 
-    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    #model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
 
 
@@ -109,6 +124,46 @@ def preprocess_extract_patch():
         return img
 
     return _preprocess_extract_patch
+
+
+#----------------------------------------------------------------------------------------------------------------------------------
+def compute_class_freqs(labels):
+    """
+        This function will help to calculate the wights of negative and postive of each class
+        Input :
+            - labels : are columns names 
+        Output : 
+            - positive_frequencies
+            - negative_frequencies
+    """
+    N = labels.shape[0]   
+    positive_frequencies = np.sum(labels==1,axis=0)/N
+    negative_frequencies = np.sum(labels==0,axis=0)/N
+    return positive_frequencies, negative_frequencies
+#----------------------------------------------------------------------------------------------------------------------------------
+
+def get_weighted_loss(pos_weights, neg_weights, epsilon=1e-7):
+    """
+        This function will calculate the loss function of the model 
+        Input :
+            - pos_weights : positive frequencies wights 
+            - neg_weights : negative frequencies wights
+            - epsilon : to not devide by 0
+        Output :
+            - loss : the loss classic function for the lost function. 
+    """
+    def weighted_loss(y_true, y_pred):
+        y_true,y_pred= tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32)
+        # initialize loss to zero
+        loss = 0.0
+
+        for i in range(len([pos_weights])):
+            # for each class, add average weighted loss for that class 
+            loss += K.mean(-((pos_weights*y_true*K.log(y_pred+epsilon))+(neg_weights*(1-y_true)*K.log(1-y_pred+epsilon)) )) #complete this line
+        return loss
+    return weighted_loss
+#----------------------------------------------------------------------------------------------------------------------------------
+
 
 
 def prepare_labels(dataset: Literal["Train", "Test"]):
@@ -139,12 +194,18 @@ def prepare_labels(dataset: Literal["Train", "Test"]):
 
 def train_model(model,isMacOs=False):
     df = pd.read_csv("Train_labels.csv")
-
+    df["labels"]= df.bord	+ df.phyllotaxie	+df.typeFeuille	+df.ligneux
     df = pd.get_dummies(
         df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
     )
+    columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
     if isMacOs : 
         df.repo=df.repo.str.replace("\\","/")
+
+    X_train, X_test, y_train, y_test = train_test_split( df["repo"], df[columns],test_size=0.10, random_state=42, stratify=df["labels"])
+    df_train=pd.concat([X_train,y_train],axis=1)
+    df_val=pd.concat([X_test,y_test],axis=1)
+    #pos_contribution,neg_contribution = freq_pos * pos_weights ,  freq_neg * neg_weights
 
     datagen_aug = ImageDataGenerator(
         preprocessing_function=preprocess_extract_patch(),
@@ -153,14 +214,13 @@ def train_model(model,isMacOs=False):
         # width_shift_range=0.2,
         # height_shift_range=0.2,
         # zoom_range=0.2,
-        # brightness_range=[0.5, 1.5],
-        # horizontal_flip=True,
+         brightness_range=[0.5, 1.5],
+         horizontal_flip=True,
         # vertical_flip=True,
     )
 
-    columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
     train_generator = datagen_aug.flow_from_dataframe(
-        dataframe=df[: round(df.shape[0] * 0.8)],
+        dataframe=df_train,#df[: round(df.shape[0] * 0.8)],
         directory="dataset",
         x_col="repo",
         y_col=columns,
@@ -170,9 +230,12 @@ def train_model(model,isMacOs=False):
         class_mode="raw",
         target_size=(IMAGE_SIZE, IMAGE_SIZE),
     )
+    freq_pos, freq_neg = compute_class_freqs(train_generator.labels)
+    pos_weights,neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
+
 
     val_generator = datagen_aug.flow_from_dataframe(
-        dataframe=df[round(df.shape[0] * 0.8) :],
+        dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
         directory="dataset",
         x_col="repo",
         y_col=columns,
@@ -218,10 +281,14 @@ def train_model(model,isMacOs=False):
             "model.hdf5", save_best_only=True, verbose=0, monitor="val_loss", mode="min"
         ),
         ReduceLROnPlateau(
-            monitor="val_loss", factor=0.3, patience=3, min_lr=0.000001, verbose=1
+            monitor="val_loss", factor=0.3, patience=5, min_lr=0.000001, verbose=1
         ),
     ]
-
+    model.compile(
+        optimizer="adam",
+        loss=get_weighted_loss(pos_weights , neg_weights),#tfa.losses.SigmoidFocalCrossEntropy(),
+        metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
+    )
     history = model.fit(
         train_generator,
         validation_data=val_generator,
