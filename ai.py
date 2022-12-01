@@ -12,7 +12,7 @@ import glob
 from typing import Literal
 import re
 from keras.applications import EfficientNetB4
-import tensorflow_addons as tfa
+#mport tensorflow_addons as tfa
 from keras.models import Model
 from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 import seaborn as sns
@@ -24,324 +24,326 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from keras.applications.densenet import DenseNet121
 
-IMAGE_SIZE = 320
-BATCH_SIZE = 8
+class ai_plantes :
+
+    def __init__(self,IMAGE_SIZE :int = 320, BATCH_SIZE : int = 8 ):
+        self.IMAGE_SIZE = IMAGE_SIZE
+        self.BATCH_SIZE = BATCH_SIZE
+
+    def croper(self, image: np.array, margin: int = 3):
+        if len(np.unique(image)) == 1:
+            raise Exception("The image is composed of a single color.")
+        if len(image.shape) == 3:
+            image_sum = image.sum(axis=2) % 765
+        else:
+            image_sum = image == 0
+        true_points = np.argwhere(image_sum)
+        top_left = true_points.min(axis=0)
+        bottom_right = true_points.max(axis=0)
+        return image[
+            max(0, top_left[0] - margin) : bottom_right[0] + 1 + margin,
+            max(0, top_left[1] - margin) : bottom_right[1] + 1 + margin,
+        ]
 
 
-
-def croper(image: np.array, margin: int = 3):
-    if len(np.unique(image)) == 1:
-        raise Exception("The image is composed of a single color.")
-    if len(image.shape) == 3:
-        image_sum = image.sum(axis=2) % 765
-    else:
-        image_sum = image == 0
-    true_points = np.argwhere(image_sum)
-    top_left = true_points.min(axis=0)
-    bottom_right = true_points.max(axis=0)
-    return image[
-        max(0, top_left[0] - margin) : bottom_right[0] + 1 + margin,
-        max(0, top_left[1] - margin) : bottom_right[1] + 1 + margin,
-    ]
-
-
-def prepare_image(image: np.array):
-    gim = skimage.color.rgb2gray(image)
-    threshold = filters.threshold_otsu(gim)
-    binary_mask = gim < threshold
-    total = binary_mask.sum()
-    coef = 0.06
-    total_light = 0
-    while total_light < (total * 0.5):
-        coef -= 0.01
-        binary_mask_light = morph.remove_small_objects(
-            binary_mask, coef * binary_mask.shape[0] * binary_mask.shape[1]
+    def prepare_image(self, image: np.array):
+        gim = skimage.color.rgb2gray(image)
+        threshold = filters.threshold_otsu(gim)
+        binary_mask = gim < threshold
+        total = binary_mask.sum()
+        coef = 0.06
+        total_light = 0
+        while total_light < (total * 0.5):
+            coef -= 0.01
+            binary_mask_light = morph.remove_small_objects(
+                binary_mask, coef * binary_mask.shape[0] * binary_mask.shape[1]
+            )
+            total_light = binary_mask_light.sum()
+        binary_mask = binary_mask_light
+        binary_mask_cleared = clear_border(
+            skimage.morphology.remove_small_holes(binary_mask, 300)
         )
-        total_light = binary_mask_light.sum()
-    binary_mask = binary_mask_light
-    binary_mask_cleared = clear_border(
-        skimage.morphology.remove_small_holes(binary_mask, 300)
-    )
-    if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
-        binary_mask = binary_mask_cleared
-    labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
-    image[labeled_image == 0] = 255
-    img = croper(image)
-    scale_percent = min(
-        IMAGE_SIZE * 100 / img.shape[0], IMAGE_SIZE * 100 / img.shape[1]
-    )
-    width = int(round(img.shape[1] * scale_percent / 100))
-    height = int(round(img.shape[0] * scale_percent / 100))
-    dim = (width, height)
-    resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
-    if resized.shape[1] != IMAGE_SIZE:
-        white = np.full(
-            (IMAGE_SIZE, IMAGE_SIZE - resized.shape[1], 3), 255, dtype=np.uint8
+        if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
+            binary_mask = binary_mask_cleared
+        labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
+        image[labeled_image == 0] = 255
+        img = self.croper(image)
+        scale_percent = min(
+            self.IMAGE_SIZE * 100 / img.shape[0], self.IMAGE_SIZE * 100 / img.shape[1]
         )
-        result = np.concatenate((resized, white), axis=1)
-    else:
-        white = np.full(
-            (IMAGE_SIZE - resized.shape[0], IMAGE_SIZE, 3), 255, dtype=np.uint8
+        width = int(round(img.shape[1] * scale_percent / 100))
+        height = int(round(img.shape[0] * scale_percent / 100))
+        dim = (width, height)
+        resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+        if resized.shape[1] != self.IMAGE_SIZE:
+            white = np.full(
+                (self.IMAGE_SIZE, self.IMAGE_SIZE - resized.shape[1], 3), 255, dtype=np.uint8
+            )
+            result = np.concatenate((resized, white), axis=1)
+        else:
+            white = np.full(
+                (self.IMAGE_SIZE - resized.shape[0], self.IMAGE_SIZE, 3), 255, dtype=np.uint8
+            )
+            result = np.concatenate((resized, white), axis=0)
+        return result
+
+
+    def create_model(self,use_pre_train=True ):
+        DenseNet121_ = DenseNet121(#EfficientNetB4(
+            weights=None, include_top=False, input_shape=(self.IMAGE_SIZE, self.IMAGE_SIZE, 3)
         )
-        result = np.concatenate((resized, white), axis=0)
-    return result
+        #efficient_net.trainable = False
+        x = DenseNet121_.output
+        #x = GlobalAveragePooling2D()(x)
+        #x = Dense(128, activation="relu")(x)
+        #x = Dense(64, activation="relu")(x)
+        x= GlobalAveragePooling2D()(x)
+        x= BatchNormalization()(x)
+        x= Dropout(0.5)(x)
+        x= Dense(1024,activation='relu')(x) 
+        x= Dense(512,activation='relu')(x) 
+        x= BatchNormalization()(x)
+        x= Dropout(0.5)(x)
+        preds=Dense(4,activation='softmax')(x)
+        model = Model(inputs=DenseNet121_.input, outputs=preds)
+    #
+        model.load_weights("DenseNet121.h5")
+        predictions = Dense(4, activation="sigmoid")(model.layers[-2].output)
+        self.model = Model(inputs=model.input, outputs=predictions)
+        if use_pre_train:
+            for layer in self.model.layers[:-8]:
+                layer.trainable=False
+            for layer in self.model.layers[-8:]:
+                layer.trainable=True
+
+        #model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+        #return self.model
 
 
-def create_model():
-    efficient_net = DenseNet121(#EfficientNetB4(
-        weights=None, include_top=False, input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3)
-    )
-    #efficient_net.trainable = False
-    x = efficient_net.output
-    #x = GlobalAveragePooling2D()(x)
-    #x = Dense(128, activation="relu")(x)
-    #x = Dense(64, activation="relu")(x)
-    x= GlobalAveragePooling2D()(x)
-    x= BatchNormalization()(x)
-    x= Dropout(0.5)(x)
-    x= Dense(1024,activation='relu')(x) 
-    x= Dense(512,activation='relu')(x) 
-    x= BatchNormalization()(x)
-    x= Dropout(0.5)(x)
-    preds=Dense(4,activation='softmax')(x)
-    model = Model(inputs=efficient_net.input, outputs=preds)
-#
-    model.load_weights("DenseNet121.h5")
-    predictions = Dense(4, activation="sigmoid")(model.layers[-2].output)
-    model = Model(inputs=model.input, outputs=predictions)
-    for layer in model.layers[:-8]:
-        layer.trainable=False
-    for layer in model.layers[-8:]:
-        layer.trainable=True
-
-    #model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-    return model
+    def preprocess_extract_patch(self ):
+        def _preprocess_extract_patch(x):
+            img = self.prepare_image(x)
+            return img
+        return _preprocess_extract_patch
 
 
-def preprocess_extract_patch():
-    def _preprocess_extract_patch(x):
-        img = prepare_image(x)
-        return img
+    #----------------------------------------------------------------------------------------------------------------------------------
+    def compute_class_freqs(self, labels):
+        """
+            This function will help to calculate the wights of negative and postive of each class
+            Input :
+                - labels : are columns names 
+            Output : 
+                - positive_frequencies
+                - negative_frequencies
+        """
+        N = labels.shape[0]   
+        positive_frequencies = np.sum(labels==1,axis=0)/N
+        negative_frequencies = np.sum(labels==0,axis=0)/N
+        return positive_frequencies, negative_frequencies
+    #----------------------------------------------------------------------------------------------------------------------------------
 
-    return _preprocess_extract_patch
+    def get_weighted_loss(self, pos_weights, neg_weights, epsilon=1e-7):
+        """
+            This function will calculate the loss function of the model 
+            Input :
+                - pos_weights : positive frequencies wights 
+                - neg_weights : negative frequencies wights
+                - epsilon : to not devide by 0
+            Output :
+                - loss : the loss classic function for the lost function. 
+        """
+        def weighted_loss(y_true, y_pred):
+            y_true,y_pred= tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32)
+            # initialize loss to zero
+            loss = 0.0
 
-
-#----------------------------------------------------------------------------------------------------------------------------------
-def compute_class_freqs(labels):
-    """
-        This function will help to calculate the wights of negative and postive of each class
-        Input :
-            - labels : are columns names 
-        Output : 
-            - positive_frequencies
-            - negative_frequencies
-    """
-    N = labels.shape[0]   
-    positive_frequencies = np.sum(labels==1,axis=0)/N
-    negative_frequencies = np.sum(labels==0,axis=0)/N
-    return positive_frequencies, negative_frequencies
-#----------------------------------------------------------------------------------------------------------------------------------
-
-def get_weighted_loss(pos_weights, neg_weights, epsilon=1e-7):
-    """
-        This function will calculate the loss function of the model 
-        Input :
-            - pos_weights : positive frequencies wights 
-            - neg_weights : negative frequencies wights
-            - epsilon : to not devide by 0
-        Output :
-            - loss : the loss classic function for the lost function. 
-    """
-    def weighted_loss(y_true, y_pred):
-        y_true,y_pred= tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32)
-        # initialize loss to zero
-        loss = 0.0
-
-        for i in range(len([pos_weights])):
-            # for each class, add average weighted loss for that class 
-            loss += K.mean(-((pos_weights*y_true*K.log(y_pred+epsilon))+(neg_weights*(1-y_true)*K.log(1-y_pred+epsilon)) )) #complete this line
-        return loss
-    return weighted_loss
-#----------------------------------------------------------------------------------------------------------------------------------
+            for i in range(len([pos_weights])):
+                # for each class, add average weighted loss for that class 
+                loss += K.mean(-((pos_weights*y_true*K.log(y_pred+epsilon))+(neg_weights*(1-y_true)*K.log(1-y_pred+epsilon)) )) #complete this line
+            return loss
+        return weighted_loss
+    #----------------------------------------------------------------------------------------------------------------------------------
 
 
 
-def prepare_labels(dataset: Literal["Train", "Test"]):
-    data_f = glob.glob("dataset/" + dataset + "/*/*")
-    df = pd.DataFrame(
-        [re.split(r"[/\\]", i)[2:] for i in data_f], columns=["class", "imFile"]
-    )
-    df["repo"] = [i[8:] for i in data_f]
-    dict_class = {
-        "castanea": ["dente", "alterne", "simple", "oui"],
-        "convolvulaceae": ["lisse", "alterne", "simple", "non"],
-        "magnolia": ["lisse", "alterne", "simple", "oui"],
-        "ulmus": ["dente", "alterne", "simple", "oui"],
-        "litsea": ["lisse", "alterne", "simple", "oui"],
-        "laurus": ["lisse", "oppose", "simple", "oui"],
-        "monimiaceae": ["lisse", "oppose", "simple", "oui"],
-        "desmodium": ["lisse", "alterne", "composee", "non"],
-        "amborella": ["lisse", "alterne", "simple", "oui"],
-        "eugenia": ["lisse", "oppose", "simple", "oui"],
-        "rubus": ["dente", "alterne", "composee", "oui"],
-    }
-    for i in dict_class.keys():
-        df.loc[
-            df["class"] == i, ["bord", "phyllotaxie", "typeFeuille", "ligneux"]
-        ] = dict_class[i]
-    df.to_csv(dataset + "_labels.csv", index=False)
+    def prepare_labels(self,dataset: Literal["Train", "Test"]):
+        data_f = glob.glob("dataset/" + dataset + "/*/*")
+        df = pd.DataFrame(
+            [re.split(r"[/\\]", i)[2:] for i in data_f], columns=["class", "imFile"]
+        )
+        df["repo"] = [i[8:] for i in data_f]
+        dict_class = {
+            "castanea": ["dente", "alterne", "simple", "oui"],
+            "convolvulaceae": ["lisse", "alterne", "simple", "non"],
+            "magnolia": ["lisse", "alterne", "simple", "oui"],
+            "ulmus": ["dente", "alterne", "simple", "oui"],
+            "litsea": ["lisse", "alterne", "simple", "oui"],
+            "laurus": ["lisse", "oppose", "simple", "oui"],
+            "monimiaceae": ["lisse", "oppose", "simple", "oui"],
+            "desmodium": ["lisse", "alterne", "composee", "non"],
+            "amborella": ["lisse", "alterne", "simple", "oui"],
+            "eugenia": ["lisse", "oppose", "simple", "oui"],
+            "rubus": ["dente", "alterne", "composee", "oui"],
+        }
+        for i in dict_class.keys():
+            df.loc[
+                df["class"] == i, ["bord", "phyllotaxie", "typeFeuille", "ligneux"]
+            ] = dict_class[i]
+        df.to_csv(dataset + "_labels.csv", index=False)
 
 
-def train_model(model,isMacOs=False):
-    df = pd.read_csv("Train_labels.csv")
-    df["labels"]= df.bord	+ df.phyllotaxie	+df.typeFeuille	+df.ligneux
-    df = pd.get_dummies(
-        df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
-    )
-    columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
-    if isMacOs : 
-        df.repo=df.repo.str.replace("\\","/")
+    def preporcess(self,data_file="Train_labels.csv",isMacOs=False):
+        self.df = pd.read_csv(data_file)
+        self.df["labels"]= self.df.bord	+ self.df.phyllotaxie	+self.df.typeFeuille +self.df.ligneux
+        self.df = pd.get_dummies(
+            self.df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
+        )
+        columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
+        if isMacOs : 
+            self.df.repo=self.df.repo.str.replace("\\","/",regex=False)
 
-    X_train, X_test, y_train, y_test = train_test_split( df["repo"], df[columns],test_size=0.10, random_state=42, stratify=df["labels"])
-    df_train=pd.concat([X_train,y_train],axis=1)
-    df_val=pd.concat([X_test,y_test],axis=1)
-    #pos_contribution,neg_contribution = freq_pos * pos_weights ,  freq_neg * neg_weights
+        X_train, X_test, y_train, y_test = train_test_split( self.df["repo"], self.df[columns],
+            test_size=0.10, random_state=42, stratify=self.df["labels"])
+        df_train=pd.concat([X_train,y_train],axis=1)
+        df_val=pd.concat([X_test,y_test],axis=1)
+        #pos_contribution,neg_contribution = freq_pos * pos_weights ,  freq_neg * neg_weights
 
-    datagen_aug = ImageDataGenerator(
-        preprocessing_function=preprocess_extract_patch(),
-        rescale=1.0 / 255,
-        # rotation_range=20,
-        # width_shift_range=0.2,
-        # height_shift_range=0.2,
-        # zoom_range=0.2,
-         brightness_range=[0.5, 1.5],
-         horizontal_flip=True,
-        # vertical_flip=True,
-    )
+        self.datagen_aug = ImageDataGenerator(
+            preprocessing_function=self.preprocess_extract_patch(),
+            rescale=1.0 / 255,
+            # rotation_range=20,
+            # width_shift_range=0.2,
+            # height_shift_range=0.2,
+            # zoom_range=0.2,
+            brightness_range=[0.5, 1.5],
+            horizontal_flip=True,
+            # vertical_flip=True,
+        )
 
-    train_generator = datagen_aug.flow_from_dataframe(
-        dataframe=df_train,#df[: round(df.shape[0] * 0.8)],
-        directory="dataset",
-        x_col="repo",
-        y_col=columns,
-        batch_size=BATCH_SIZE,
-        seed=42,
-        shuffle=True,
-        class_mode="raw",
-        target_size=(IMAGE_SIZE, IMAGE_SIZE),
-    )
-    freq_pos, freq_neg = compute_class_freqs(train_generator.labels)
-    pos_weights,neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
-
-
-    val_generator = datagen_aug.flow_from_dataframe(
-        dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
-        directory="dataset",
-        x_col="repo",
-        y_col=columns,
-        batch_size=BATCH_SIZE,
-        seed=42,
-        shuffle=True,
-        class_mode="raw",
-        target_size=(IMAGE_SIZE, IMAGE_SIZE),
-    )
-
-    test_df = pd.read_csv("Test_labels.csv")
-
-    test_df = pd.get_dummies(
-        test_df,
-        columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"],
-        drop_first=True,
-    )
-    if isMacOs : 
-        test_df.repo=test_df.repo.str.replace("\\","/")
-
-    test_generator = datagen_aug.flow_from_dataframe(
-        dataframe=test_df,
-        directory="dataset",
-        x_col="repo",
-        y_col=columns,
-        batch_size=BATCH_SIZE,
-        seed=42,
-        shuffle=True,
-        class_mode="raw",
-        target_size=(IMAGE_SIZE, IMAGE_SIZE),
-    )
-
-    callbacks = [
-        keras.callbacks.EarlyStopping(monitor="val_loss", patience=5),
-        keras.callbacks.ModelCheckpoint(
-            filepath="model_checkpoint",
-            save_weights_only=True,
-            monitor="val_accuracy",
-            mode="max",
-            save_best_only=True,
-        ),
-        ModelCheckpoint(
-            "model.hdf5", save_best_only=True, verbose=0, monitor="val_loss", mode="min"
-        ),
-        ReduceLROnPlateau(
-            monitor="val_loss", factor=0.3, patience=5, min_lr=0.000001, verbose=1
-        ),
-    ]
-    model.compile(
-        optimizer="adam",
-        loss=get_weighted_loss(pos_weights , neg_weights),#tfa.losses.SigmoidFocalCrossEntropy(),
-        metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
-    )
-    history = model.fit(
-        train_generator,
-        validation_data=val_generator,
-        epochs=10,
-        verbose=1,
-        steps_per_epoch=train_generator.n / BATCH_SIZE,
-        callbacks=[callbacks],
-    )
-
-    preds = model.predict(test_generator, steps=test_generator.n / BATCH_SIZE)
-
-    return history, preds
+        self.train_generator = self.datagen_aug.flow_from_dataframe(
+            dataframe=df_train,#df[: round(df.shape[0] * 0.8)],
+            directory="dataset",
+            x_col="repo",
+            y_col=columns,
+            batch_size=self.BATCH_SIZE,
+            seed=42,
+            shuffle=True,
+            class_mode="raw",
+            target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
+        )
+        freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
+        self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
 
 
-def print_confusion_matrix(
-    confusion_matrix, axes, class_label, class_names, fontsize=14
-):
+        self.val_generator = self.datagen_aug.flow_from_dataframe(
+            dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
+            directory="dataset",
+            x_col="repo",
+            y_col=columns,
+            batch_size=self.BATCH_SIZE,
+            seed=42,
+            shuffle=True,
+            class_mode="raw",
+            target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
+        )
 
-    df_cm = pd.DataFrame(
-        confusion_matrix,
-        index=class_names,
-        columns=class_names,
-    )
+        test_df = pd.read_csv("Test_labels.csv")
 
-    try:
-        heatmap = sns.heatmap(df_cm, annot=True, fmt="d", cbar=False, ax=axes)
-    except ValueError:
-        raise ValueError("Confusion matrix values must be integers.")
-    heatmap.yaxis.set_ticklabels(
-        heatmap.yaxis.get_ticklabels(), rotation=0, ha="right", fontsize=fontsize
-    )
-    heatmap.xaxis.set_ticklabels(
-        heatmap.xaxis.get_ticklabels(), rotation=45, ha="right", fontsize=fontsize
-    )
-    axes.set_ylabel("True label")
-    axes.set_xlabel("Predicted label")
-    axes.set_title("Confusion Matrix for the class - " + class_label)
+        test_df = pd.get_dummies(
+            test_df,
+            columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"],
+            drop_first=True,
+        )
+        if isMacOs : 
+            test_df.repo=test_df.repo.str.replace("\\","/",regex=False)
+
+        self.test_generator = self.datagen_aug.flow_from_dataframe(
+            dataframe=test_df,
+            directory="dataset",
+            x_col="repo",
+            y_col=columns,
+            batch_size=self.BATCH_SIZE,
+            seed=42,
+            shuffle=True,
+            class_mode="raw",
+            target_size=(self.IMAGE_SIZE,self.IMAGE_SIZE),
+        )
+    def fit(self):
+        callbacks = [
+            keras.callbacks.EarlyStopping(monitor="val_loss", patience=5),
+            keras.callbacks.ModelCheckpoint(
+                filepath="model_checkpoint",
+                save_weights_only=True,
+                monitor="val_accuracy",
+                mode="max",
+                save_best_only=True,
+            ),
+            ModelCheckpoint(
+                "model.hdf5", save_best_only=True, verbose=0, monitor="val_loss", mode="min"
+            ),
+            ReduceLROnPlateau(
+                monitor="val_loss", factor=0.3, patience=5, min_lr=0.000001, verbose=1
+            ),
+        ]
+        self.model.compile(
+            optimizer="adam",
+            loss=self.get_weighted_loss(self.pos_weights , self.neg_weights),#tfa.losses.SigmoidFocalCrossEntropy(),
+            metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
+        )
+        history = self.model.fit(
+            self.train_generator,
+            validation_data=self.val_generator,
+            epochs=10,
+            verbose=1,
+            steps_per_epoch=self.train_generator.n / self.BATCH_SIZE,
+            callbacks=[callbacks],
+        )
+
+        preds = model.predict(test_generator, steps=test_generator.n / self.BATCH_SIZE)
+
+        return history, preds
 
 
-def print_multilabel_confusion_matrix(y_preds):
-    df = pd.read_csv("Test_labels.csv")
+    def print_confusion_matrix(self,
+        confusion_matrix, axes, class_label, class_names, fontsize=14
+    ):
 
-    df = pd.get_dummies(
-        df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
-    )
-    y_preds = y_preds.round().astype(np.uint8)
-    y_test = np.array(df.iloc[:, 3:])
-    y_test.shape, y_preds.shape
-    confusion_matrix = multilabel_confusion_matrix(y_test, y_preds)
-    labels = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
-    fig, ax = plt.subplots(2, 2, figsize=(10, 7))
-    for axes, cfs_matrix, label in zip(ax.flatten(), confusion_matrix, labels):
-        print_confusion_matrix(cfs_matrix, axes, label, ["N", "Y"])
+        df_cm = pd.DataFrame(
+            confusion_matrix,
+            index=class_names,
+            columns=class_names,
+        )
 
-    fig.tight_layout()
-    plt.show()
+        try:
+            heatmap = sns.heatmap(df_cm, annot=True, fmt="d", cbar=False, ax=axes)
+        except ValueError:
+            raise ValueError("Confusion matrix values must be integers.")
+        heatmap.yaxis.set_ticklabels(
+            heatmap.yaxis.get_ticklabels(), rotation=0, ha="right", fontsize=fontsize
+        )
+        heatmap.xaxis.set_ticklabels(
+            heatmap.xaxis.get_ticklabels(), rotation=45, ha="right", fontsize=fontsize
+        )
+        axes.set_ylabel("True label")
+        axes.set_xlabel("Predicted label")
+        axes.set_title("Confusion Matrix for the class - " + class_label)
+
+
+    def print_multilabel_confusion_matrix(self,y_preds):
+        df = pd.read_csv("Test_labels.csv")
+
+        df = pd.get_dummies(
+            df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
+        )
+        y_preds = y_preds.round().astype(np.uint8)
+        y_test = np.array(df.iloc[:, 3:])
+        y_test.shape, y_preds.shape
+        confusion_matrix = multilabel_confusion_matrix(y_test, y_preds)
+        labels = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
+        fig, ax = plt.subplots(2, 2, figsize=(10, 7))
+        for axes, cfs_matrix, label in zip(ax.flatten(), confusion_matrix, labels):
+            self.print_confusion_matrix(cfs_matrix, axes, label, ["N", "Y"])
+
+        fig.tight_layout()
+        plt.show()
