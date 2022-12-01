@@ -300,7 +300,7 @@ class ai_plantes :
             callbacks=[callbacks],
         )
 
-        preds = model.predict(test_generator, steps=test_generator.n / self.BATCH_SIZE)
+        preds = self.model.predict(test_generator, steps=test_generator.n / self.BATCH_SIZE)
 
         return history, preds
 
