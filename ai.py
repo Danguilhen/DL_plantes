@@ -212,12 +212,12 @@ class ai_plantes :
         self.datagen_aug = ImageDataGenerator(
             preprocessing_function=self.preprocess_extract_patch(),
             rescale=1.0 / 255,
-            # rotation_range=20,
+            rotation_range=20,
             # width_shift_range=0.2,
             # height_shift_range=0.2,
-            # zoom_range=0.2,
+            zoom_range=0.2,
             brightness_range=[0.5, 1.5],
-            horizontal_flip=True,
+            #horizontal_flip=True,
             # vertical_flip=True,
         )
 
