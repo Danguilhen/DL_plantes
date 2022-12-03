@@ -304,13 +304,14 @@ class ai_plantes :
             seed=42,
             shuffle=True,
             class_mode="raw",
-            subset="training",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
         print("The train_generator is ready ")
         ##################################################################
 
-        self.val_generator = self.datagen_aug.flow_from_dataframe(
+        self.val_datagen=ImageDataGenerator(rescale=1./255.,
+            preprocessing_function=self.preprocess_extract_patch(),)
+        self.val_generator = self.val_datagen.flow_from_dataframe(
             dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
             directory="dataset",
             x_col="repo",
@@ -319,7 +320,6 @@ class ai_plantes :
             seed=42,
             shuffle=True,
             class_mode="raw",
-            subset="validation",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
         print("The val_generator is ready. ")
@@ -342,7 +342,6 @@ class ai_plantes :
             seed=42,
             shuffle=True,
             class_mode="raw",
-            subset="validation",
             target_size=(self.IMAGE_SIZE,self.IMAGE_SIZE),
         )
         print("The test_generator is ready. ")
