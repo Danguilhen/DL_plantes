@@ -330,7 +330,8 @@ class ai_plantes :
             freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
             self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         ##################################################################
-        self.test_datagen=ImageDataGenerator(rescale=1./255.)
+        self.test_datagen=ImageDataGenerator(rescale=1./255.,
+            preprocessing_function=self.preprocess_extract_patch(),)
 
         self.test_generator = self.test_datagen.flow_from_dataframe(
             dataframe=self.test_df,
