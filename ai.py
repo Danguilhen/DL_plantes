@@ -304,6 +304,7 @@ class ai_plantes :
             seed=42,
             shuffle=True,
             class_mode="raw",
+            subset="training",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
         print("The train_generator is ready ")
@@ -318,6 +319,7 @@ class ai_plantes :
             seed=42,
             shuffle=True,
             class_mode="raw",
+            subset="validation",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
         print("The val_generator is ready. ")
@@ -328,8 +330,9 @@ class ai_plantes :
             freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
             self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         ##################################################################
+        self.test_datagen=ImageDataGenerator(rescale=1./255.)
 
-        self.test_generator = self.datagen_aug.flow_from_dataframe(
+        self.test_generator = self.test_datagen.flow_from_dataframe(
             dataframe=self.test_df,
             directory="dataset",
             x_col="repo",
@@ -338,6 +341,7 @@ class ai_plantes :
             seed=42,
             shuffle=True,
             class_mode="raw",
+            subset="validation",
             target_size=(self.IMAGE_SIZE,self.IMAGE_SIZE),
         )
         print("The test_generator is ready. ")
