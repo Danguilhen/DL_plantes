@@ -6,7 +6,7 @@ import skimage.morphology as morph
 from skimage.segmentation import clear_border
 from skimage import filters
 import keras
-from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout
+from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout,
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
@@ -20,6 +20,7 @@ from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import multilabel_confusion_matrix
+from sklearn.utils import class_weight
 from keras import backend as K
 import tensorflow as tf 
 from sklearn.model_selection import train_test_split
@@ -34,7 +35,7 @@ import warnings
 warnings.filterwarnings('ignore')
 class ai_plantes :
 
-    def __init__(self,IMAGE_SIZE :int = 320, BATCH_SIZE : int = 18 ):
+    def __init__(self,IMAGE_SIZE :int = 320, BATCH_SIZE : int = 10 ):
         self.IMAGE_SIZE = IMAGE_SIZE
         self.BATCH_SIZE = BATCH_SIZE
 
@@ -68,10 +69,10 @@ class ai_plantes :
             )
             total_light = binary_mask_light.sum()
         binary_mask = binary_mask_light
-        #binary_mask_cleared = clear_border(
-        # skimage.morphology.remove_small_holes(binary_mask, 300))
-        #if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
-        #    binary_mask = binary_mask_cleared
+        binary_mask_cleared = clear_border(
+         skimage.morphology.remove_small_holes(binary_mask, 300))
+        if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
+            binary_mask = binary_mask_cleared
         labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
         image[labeled_image == 0] = 255
         img = self.croper(image)
