@@ -4,7 +4,7 @@ import skimage.morphology as morph
 from skimage.segmentation import clear_border
 from skimage import filters
 import keras
-from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout
+from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout,Flatten , MaxPooling2D, Conv2D
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
@@ -13,7 +13,7 @@ from typing import Literal
 import re
 from keras.applications import EfficientNetB4
 #mport tensorflow_addons as tfa
-from keras.models import Model
+from keras.models import Model,Sequential
 from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -60,11 +60,10 @@ class ai_plantes :
             )
             total_light = binary_mask_light.sum()
         binary_mask = binary_mask_light
-        binary_mask_cleared = clear_border(
-            skimage.morphology.remove_small_holes(binary_mask, 300)
-        )
-        if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
-            binary_mask = binary_mask_cleared
+        #binary_mask_cleared = clear_border(
+        #    skimage.morphology.remove_small_holes(binary_mask, 300))
+        #if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
+        #    binary_mask = binary_mask_cleared
         labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
         image[labeled_image == 0] = 255
         img = self.croper(image)
@@ -88,14 +87,14 @@ class ai_plantes :
         return result
 
 
-    def create_model(self,use_pre_train=True ,architecture=DenseNet121
+    def create_model(self,allow_train_OnAll=False ,architecture=DenseNet121
                 ,sorce="DenseNet121.h5",balance=True,weights=None):
         """
             This function will cearte a model with a model with a given architecture.
 
             Parameters
             ----------
-            use_pre_train : bool 
+            dont_allow_train_OnAll : bool 
                 if True use the pre trained model 
             architecture : classe 
                 the architecture of the chossen model
@@ -112,8 +111,7 @@ class ai_plantes :
             No thing
         """
         The_model = architecture(#EfficientNetB4( 
-            weights=None, include_top=False, input_shape=(self.IMAGE_SIZE, self.IMAGE_SIZE, 3)
-        )
+            weights=None, include_top=False, input_shape=(self.IMAGE_SIZE, self.IMAGE_SIZE, 3))
         x = The_model.output
         x= GlobalAveragePooling2D()(x)# adding global layer 
         x= BatchNormalization()(x)
@@ -122,6 +120,9 @@ class ai_plantes :
         x= Dense(512,activation='relu')(x) 
         x= BatchNormalization()(x)
         x= Dropout(0.5)(x)
+        #####################################################
+
+        #import pretrained weights
         if sorce =="DenseNet121.h5": #pretrained model on plants 
             preds=Dense(4,activation='softmax')(x)
             model = Model(inputs=The_model.input, outputs=preds)
@@ -131,22 +132,28 @@ class ai_plantes :
         else :
             predictions = Dense(len(self.columns), activation=self.out_put)(x)
             self.model = Model(inputs=The_model.input, outputs=predictions)
+        #####################################################
 
-        if use_pre_train:
+        #pre-trained  choice
+        if not allow_train_OnAll:
             for layer in self.model.layers[:-8]:
                 layer.trainable=False
             for layer in self.model.layers[-8:]:
                 layer.trainable=True
-    
+        #####################################################
 
-        loss="binary_crossentropy"
+        #loss function choice
+        loss="binary_crossentropy" #tfa.losses.SigmoidFocalCrossEntropy(),
         if (self.out_put =="sigmoid")&(balance):
             loss=self.get_weighted_loss(self.pos_weights , self.neg_weights)
         elif self.out_put =="softmax" :
             loss="CategoricalCrossentropy"
-        self.model.compile(optimizer="adam",loss=loss,#tfa.losses.SigmoidFocalCrossEntropy(),
-        metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
-    )
+        #####################################################
+
+        self.model.compile(optimizer="adam",loss=loss,
+        metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()])
+
+    
        
 
     def preprocess_extract_patch(self ):
@@ -223,7 +230,8 @@ class ai_plantes :
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def preporcess(self,data_file="Train_labels.csv",isMacOs=False,out_put="sigmoid"):
+    def preporcess(self,data_file="Train_labels.csv",isMacOs=False,out_put="sigmoid",
+            balance_data=False):
         """
             This function will import dataFrames, split the data, tranforme the data and 
              preporcess the data. It will creat 3 data base Trai - Valdidation - Test 
@@ -238,6 +246,8 @@ class ai_plantes :
 
             out_put : string 
                 What kind of output sigmoid or softmax
+            balance_data : bool
+                It will blance the data in equal distubatioin 
             Returns
             -------
             no thing
@@ -253,6 +263,13 @@ class ai_plantes :
         self.df["labels"]= self.df.bord+"-"+ self.df.phyllotaxie+"-" +self.df.typeFeuille+"-" +self.df.ligneux
         self.test_df["labels"]= self.test_df.bord+"-"+ self.test_df.phyllotaxie+"-" +self.test_df.typeFeuille+"-" +self.test_df.ligneux
         self.columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"]
+        if balance_data:
+            print("\n\nThe distubation(Disproportionate Sampling methode) is: ")
+            uni=np.unique(self.df.labels,return_counts=True)
+            m=[print(f"Classe {cla} is repeated {n} times ") for cla, n in zip(uni[0],uni[1]) ]
+            print("We have to make them all equal to the minimum count to balance the distrubation which is:  ",min(uni[1]))
+            self.df=self.df.groupby('labels', group_keys=False).apply(lambda x: x.sample(min(uni[1])))
+            print("##############################################################\n\n")
         ##################################################################
 
         if self.out_put=="softmax": 
@@ -285,11 +302,11 @@ class ai_plantes :
         self.datagen_aug = ImageDataGenerator(
             preprocessing_function=self.preprocess_extract_patch(),
             rescale=1.0 / 255,
-            rotation_range=20,
+            #rotation_range=20,
             # width_shift_range=0.2,
             # height_shift_range=0.2,
-            zoom_range=0.2,
-            brightness_range=[0.5, 1.5],
+            #zoom_range=0.2,
+            #brightness_range=[0.4,1.5],
             #horizontal_flip=True,
             # vertical_flip=True,
         )
@@ -310,7 +327,8 @@ class ai_plantes :
         ##################################################################
 
         self.val_datagen=ImageDataGenerator(rescale=1./255.,
-            preprocessing_function=self.preprocess_extract_patch(),)
+            preprocessing_function=self.preprocess_extract_patch(),
+            )
         self.val_generator = self.val_datagen.flow_from_dataframe(
             dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
             directory="dataset",
@@ -330,8 +348,10 @@ class ai_plantes :
             freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
             self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         ##################################################################
+
         self.test_datagen=ImageDataGenerator(rescale=1./255.,
-            preprocessing_function=self.preprocess_extract_patch(),)
+            preprocessing_function=self.preprocess_extract_patch(),
+            )
 
         self.test_generator = self.test_datagen.flow_from_dataframe(
             dataframe=self.test_df,
@@ -348,9 +368,9 @@ class ai_plantes :
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
     
-    def fit(self):
+    def fit(self,epochs=10):
         callbacks = [
-            keras.callbacks.EarlyStopping(monitor="val_loss", patience=5),
+            keras.callbacks.EarlyStopping(monitor="val_loss", patience=10),
             keras.callbacks.ModelCheckpoint(
                 filepath="model_checkpoint",
                 save_weights_only=True,
@@ -359,17 +379,17 @@ class ai_plantes :
                 save_best_only=True,
             ),
             ModelCheckpoint(
-                "model.hdf5", save_best_only=True, verbose=0, monitor="val_loss", mode="min"
+                "model.hdf5", save_best_only=True, verbose=1, monitor="val_loss", mode="min"
             ),
             ReduceLROnPlateau(
-                monitor="val_loss", factor=0.3, patience=5, min_lr=0.000001, verbose=1
+                monitor="val_loss", factor=0.2, patience=5, min_lr=0.000001, verbose=1
             ),
         ]
         
         history = self.model.fit(
             self.train_generator,
             validation_data=self.val_generator,
-            epochs=10,
+            epochs=epochs,
             verbose=1,
             steps_per_epoch=self.train_generator.n / self.BATCH_SIZE,
             callbacks=[callbacks],
