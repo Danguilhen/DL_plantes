@@ -23,7 +23,7 @@ from keras import backend as K
 import tensorflow as tf 
 from sklearn.model_selection import train_test_split
 from keras.applications.densenet import DenseNet121
-
+from sklearn.preprocessing import  LabelEncoder , OneHotEncoder
 class ai_plantes :
 
     def __init__(self,IMAGE_SIZE :int = 320, BATCH_SIZE : int = 8 ):
@@ -88,16 +88,29 @@ class ai_plantes :
         return result
 
 
-    def create_model(self,use_pre_train=True ):
-        DenseNet121_ = DenseNet121(#EfficientNetB4(
+    def create_model(self,use_pre_train=True ,architecture=DenseNet121
+                ,sorce="DenseNet121.h5"):
+        """
+            This function will cearte a model with a model with a given architecture.
+
+            Parameters
+            ----------
+            use_pre_train : bool 
+                if True use the pre trained model 
+            architecture : classe 
+                the architecture of the chossen model
+
+            sorce : string 
+                The path of your pretrained weights 
+            Returns
+            -------
+            no thing
+        """
+        The_model = architecture(#EfficientNetB4(
             weights=None, include_top=False, input_shape=(self.IMAGE_SIZE, self.IMAGE_SIZE, 3)
         )
-        #efficient_net.trainable = False
-        x = DenseNet121_.output
-        #x = GlobalAveragePooling2D()(x)
-        #x = Dense(128, activation="relu")(x)
-        #x = Dense(64, activation="relu")(x)
-        x= GlobalAveragePooling2D()(x)
+        x = The_model.output
+        x= GlobalAveragePooling2D()(x)# adding global layer 
         x= BatchNormalization()(x)
         x= Dropout(0.5)(x)
         x= Dense(1024,activation='relu')(x) 
@@ -105,20 +118,26 @@ class ai_plantes :
         x= BatchNormalization()(x)
         x= Dropout(0.5)(x)
         preds=Dense(4,activation='softmax')(x)
-        model = Model(inputs=DenseNet121_.input, outputs=preds)
-    #
-        model.load_weights("DenseNet121.h5")
-        predictions = Dense(4, activation="sigmoid")(model.layers[-2].output)
+        model = Model(inputs=The_model.input, outputs=preds)
+        model.load_weights(sorce) #here are the weights 
+        #if self.out_put =="sigmoid":
+        loss=self.get_weighted_loss(self.pos_weights , self.neg_weights)
+        #else:
+        #    loss="CategoricalCrossentropy"
+
+        predictions = Dense(len(self.columns), activation=self.out_put)(model.layers[-2].output)
         self.model = Model(inputs=model.input, outputs=predictions)
         if use_pre_train:
             for layer in self.model.layers[:-8]:
                 layer.trainable=False
             for layer in self.model.layers[-8:]:
                 layer.trainable=True
+    
 
-        #model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-        #return self.model
-
+        self.model.compile(optimizer="adam",loss=loss,#tfa.losses.SigmoidFocalCrossEntropy(),
+        metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
+    )
+       
 
     def preprocess_extract_patch(self ):
         def _preprocess_extract_patch(x):
@@ -163,8 +182,8 @@ class ai_plantes :
                 loss += K.mean(-((pos_weights*y_true*K.log(y_pred+epsilon))+(neg_weights*(1-y_true)*K.log(1-y_pred+epsilon)) )) #complete this line
             return loss
         return weighted_loss
-    #----------------------------------------------------------------------------------------------------------------------------------
 
+#----------------------------------------------------------------------------------------------------------------------------------
 
 
     def prepare_labels(self,dataset: Literal["Train", "Test"]):
@@ -192,23 +211,53 @@ class ai_plantes :
             ] = dict_class[i]
         df.to_csv(dataset + "_labels.csv", index=False)
 
+#-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def preporcess(self,data_file="Train_labels.csv",isMacOs=False):
+    def preporcess(self,data_file="Train_labels.csv",isMacOs=False,out_put="sigmoid"):
+
+
+        # Data Frame prepreprations 
+        print("We are going to preporcess the data ...")
         self.df = pd.read_csv(data_file)
-        self.df["labels"]= self.df.bord	+ self.df.phyllotaxie	+self.df.typeFeuille +self.df.ligneux
-        self.df = pd.get_dummies(
-            self.df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
-        )
-        columns = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
-        if isMacOs : 
-            self.df.repo=self.df.repo.str.replace("\\","/",regex=False)
+        self.test_df = pd.read_csv("Test_labels.csv")
+        self.out_put=out_put
+        # creating a labels variable to groupe all the output together 
+        self.df["labels"]= self.df.bord+"-"+ self.df.phyllotaxie+"-" +self.df.typeFeuille+"-" +self.df.ligneux
+        self.test_df["labels"]= self.test_df.bord+"-"+ self.test_df.phyllotaxie+"-" +self.test_df.typeFeuille+"-" +self.test_df.ligneux
+        self.columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"]
 
-        X_train, X_test, y_train, y_test = train_test_split( self.df["repo"], self.df[columns],
+        if self.out_put=="softmax": 
+            #if softmax add compute weights
+            self.class_weights = class_weight.compute_class_weight('balanced',
+                                                 classes=np.unique(self.df["labels"].values),
+                                                 y=self.df["labels"].values)
+            self.columns=["labels"]
+            print()
+
+        #transofrm oneHot_encoding 
+        self.pre_classe= OneHotEncoder(drop='if_binary')
+        seg = self.pre_classe.fit_transform(self.df[self.columns]).toarray()
+        seg_test = self.pre_classe.transform(self.test_df[self.columns]).toarray()
+        #new columns 
+        self.columns = self.pre_classe.get_feature_names_out()
+        self.df[self.columns]=seg
+        self.test_df[self.columns]=seg_test
+     
+
+        if isMacOs : 
+            # for Mac OS useres to read files
+            self.df.repo=self.df.repo.str.replace("\\","/",regex=False)
+            self.test_df.repo=self.test_df.repo.str.replace("\\","/",regex=False)
+
+
+        # split train validation data
+        X_train, X_test, y_train, y_test = train_test_split( self.df["repo"], self.df[self.columns],
             test_size=0.10, random_state=42, stratify=self.df["labels"])
         df_train=pd.concat([X_train,y_train],axis=1)
         df_val=pd.concat([X_test,y_test],axis=1)
-        #pos_contribution,neg_contribution = freq_pos * pos_weights ,  freq_neg * neg_weights
 
+
+        # start augmatation here 
         self.datagen_aug = ImageDataGenerator(
             preprocessing_function=self.preprocess_extract_patch(),
             rescale=1.0 / 255,
@@ -220,55 +269,52 @@ class ai_plantes :
             #horizontal_flip=True,
             # vertical_flip=True,
         )
-
+        
         self.train_generator = self.datagen_aug.flow_from_dataframe(
             dataframe=df_train,#df[: round(df.shape[0] * 0.8)],
             directory="dataset",
             x_col="repo",
-            y_col=columns,
+            y_col=self.columns,
             batch_size=self.BATCH_SIZE,
             seed=42,
             shuffle=True,
             class_mode="raw",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
+        #if self.out_put=="sigmoid":
         freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
         self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
-
+        print("The train_generator is ready ")
 
         self.val_generator = self.datagen_aug.flow_from_dataframe(
             dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
             directory="dataset",
             x_col="repo",
-            y_col=columns,
+            y_col=self.columns,
             batch_size=self.BATCH_SIZE,
             seed=42,
             shuffle=True,
             class_mode="raw",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
+        print("The val_generator is ready. ")
 
-        test_df = pd.read_csv("Test_labels.csv")
-
-        test_df = pd.get_dummies(
-            test_df,
-            columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"],
-            drop_first=True,
-        )
-        if isMacOs : 
-            test_df.repo=test_df.repo.str.replace("\\","/",regex=False)
 
         self.test_generator = self.datagen_aug.flow_from_dataframe(
-            dataframe=test_df,
+            dataframe=self.test_df,
             directory="dataset",
             x_col="repo",
-            y_col=columns,
+            y_col=self.columns,
             batch_size=self.BATCH_SIZE,
             seed=42,
             shuffle=True,
             class_mode="raw",
             target_size=(self.IMAGE_SIZE,self.IMAGE_SIZE),
         )
+        print("The test_generator is ready. ")
+
+#-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    
     def fit(self):
         callbacks = [
             keras.callbacks.EarlyStopping(monitor="val_loss", patience=5),
@@ -286,11 +332,7 @@ class ai_plantes :
                 monitor="val_loss", factor=0.3, patience=5, min_lr=0.000001, verbose=1
             ),
         ]
-        self.model.compile(
-            optimizer="adam",
-            loss=self.get_weighted_loss(self.pos_weights , self.neg_weights),#tfa.losses.SigmoidFocalCrossEntropy(),
-            metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
-        )
+        
         history = self.model.fit(
             self.train_generator,
             validation_data=self.val_generator,
@@ -298,7 +340,9 @@ class ai_plantes :
             verbose=1,
             steps_per_epoch=self.train_generator.n / self.BATCH_SIZE,
             callbacks=[callbacks],
+            #class_weight=self.class_weights if (self.out_put == "softmax" ) else None
         )
+  
 
         preds = self.model.predict(self.test_generator, steps=self.test_generator.n / self.BATCH_SIZE)
 
