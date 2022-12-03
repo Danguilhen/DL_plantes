@@ -120,10 +120,10 @@ class ai_plantes :
         preds=Dense(4,activation='softmax')(x)
         model = Model(inputs=The_model.input, outputs=preds)
         model.load_weights(sorce) #here are the weights 
-        #if self.out_put =="sigmoid":
-        loss=self.get_weighted_loss(self.pos_weights , self.neg_weights)
-        #else:
-        #    loss="CategoricalCrossentropy"
+        if self.out_put =="sigmoid":
+            loss=self.get_weighted_loss(self.pos_weights , self.neg_weights)
+        else:
+            loss="CategoricalCrossentropy"
 
         predictions = Dense(len(self.columns), activation=self.out_put)(model.layers[-2].output)
         self.model = Model(inputs=model.input, outputs=predictions)
@@ -214,9 +214,28 @@ class ai_plantes :
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     def preporcess(self,data_file="Train_labels.csv",isMacOs=False,out_put="sigmoid"):
+        """
+            This function will import dataFrames, split the data, tranforme the data and 
+             preporcess the data. It will creat 3 data base Trai - Valdidation - Test 
+             all of them will have the forme of gernators.
 
+            Parameters
+            ----------
+            data_file : string 
+                train data in csv file 
+            isMacOs : bool 
+                True if Mac OS user read path images
+
+            out_put : string 
+                What kind of output sigmoid or softmax
+            Returns
+            -------
+            no thing
+
+        """
 
         # Data Frame prepreprations 
+        #Importaning Data
         print("We are going to preporcess the data ...")
         self.df = pd.read_csv(data_file)
         self.test_df = pd.read_csv("Test_labels.csv")
@@ -225,15 +244,11 @@ class ai_plantes :
         self.df["labels"]= self.df.bord+"-"+ self.df.phyllotaxie+"-" +self.df.typeFeuille+"-" +self.df.ligneux
         self.test_df["labels"]= self.test_df.bord+"-"+ self.test_df.phyllotaxie+"-" +self.test_df.typeFeuille+"-" +self.test_df.ligneux
         self.columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"]
+        ##################################################################
 
         if self.out_put=="softmax": 
             #if softmax add compute weights
-            self.class_weights = class_weight.compute_class_weight('balanced',
-                                                 classes=np.unique(self.df["labels"].values),
-                                                 y=self.df["labels"].values)
             self.columns=["labels"]
-            print()
-
         #transofrm oneHot_encoding 
         self.pre_classe= OneHotEncoder(drop='if_binary')
         seg = self.pre_classe.fit_transform(self.df[self.columns]).toarray()
@@ -242,20 +257,25 @@ class ai_plantes :
         self.columns = self.pre_classe.get_feature_names_out()
         self.df[self.columns]=seg
         self.test_df[self.columns]=seg_test
-     
+        ##################################################################
 
         if isMacOs : 
             # for Mac OS useres to read files
             self.df.repo=self.df.repo.str.replace("\\","/",regex=False)
             self.test_df.repo=self.test_df.repo.str.replace("\\","/",regex=False)
+        ##################################################################
 
+        #compute loss:
+        freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
+        self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
+        ##################################################################
 
         # split train validation data
         X_train, X_test, y_train, y_test = train_test_split( self.df["repo"], self.df[self.columns],
             test_size=0.10, random_state=42, stratify=self.df["labels"])
         df_train=pd.concat([X_train,y_train],axis=1)
         df_val=pd.concat([X_test,y_test],axis=1)
-
+        ##################################################################
 
         # start augmatation here 
         self.datagen_aug = ImageDataGenerator(
@@ -269,7 +289,8 @@ class ai_plantes :
             #horizontal_flip=True,
             # vertical_flip=True,
         )
-        
+        ##################################################################
+
         self.train_generator = self.datagen_aug.flow_from_dataframe(
             dataframe=df_train,#df[: round(df.shape[0] * 0.8)],
             directory="dataset",
@@ -281,10 +302,8 @@ class ai_plantes :
             class_mode="raw",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
-        #if self.out_put=="sigmoid":
-        freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
-        self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         print("The train_generator is ready ")
+        ##################################################################
 
         self.val_generator = self.datagen_aug.flow_from_dataframe(
             dataframe=df_val,#df[round(df.shape[0] * 0.8) :],
@@ -298,7 +317,7 @@ class ai_plantes :
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
         print("The val_generator is ready. ")
-
+        ##################################################################
 
         self.test_generator = self.datagen_aug.flow_from_dataframe(
             dataframe=self.test_df,
