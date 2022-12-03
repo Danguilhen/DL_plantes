@@ -1,10 +1,12 @@
 import skimage
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import numpy as np
 import skimage.morphology as morph
 from skimage.segmentation import clear_border
 from skimage import filters
 import keras
-from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout,Flatten , MaxPooling2D, Conv2D
+from keras.layers import Dense, GlobalAveragePooling2D,BatchNormalization,Dropout
 import pandas as pd
 import cv2
 from keras.preprocessing.image import ImageDataGenerator
@@ -13,24 +15,30 @@ from typing import Literal
 import re
 from keras.applications import EfficientNetB4
 #mport tensorflow_addons as tfa
-from keras.models import Model,Sequential
+from keras.models import Model
 from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import multilabel_confusion_matrix
-from sklearn.utils import class_weight
 from keras import backend as K
 import tensorflow as tf 
 from sklearn.model_selection import train_test_split
 from keras.applications.densenet import DenseNet121
 from sklearn.preprocessing import  LabelEncoder , OneHotEncoder
+from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import classification_report
+ 
+
+
+import warnings
+warnings.filterwarnings('ignore')
 class ai_plantes :
 
-    def __init__(self,IMAGE_SIZE :int = 320, BATCH_SIZE : int = 8 ):
+    def __init__(self,IMAGE_SIZE :int = 320, BATCH_SIZE : int = 18 ):
         self.IMAGE_SIZE = IMAGE_SIZE
         self.BATCH_SIZE = BATCH_SIZE
 
-    def croper(self, image: np.array, margin: int = 3):
+    def croper(self, image: np.array, margin: int = 18):
         if len(np.unique(image)) == 1:
             raise Exception("The image is composed of a single color.")
         if len(image.shape) == 3:
@@ -60,10 +68,10 @@ class ai_plantes :
             )
             total_light = binary_mask_light.sum()
         binary_mask = binary_mask_light
-        binary_mask_cleared = clear_border(
-            skimage.morphology.remove_small_holes(binary_mask, 300))
-        if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
-            binary_mask = binary_mask_cleared
+        #binary_mask_cleared = clear_border(
+        # skimage.morphology.remove_small_holes(binary_mask, 300))
+        #if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
+        #    binary_mask = binary_mask_cleared
         labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
         image[labeled_image == 0] = 255
         img = self.croper(image)
@@ -335,8 +343,7 @@ class ai_plantes :
             x_col="repo",
             y_col=self.columns,
             batch_size=self.BATCH_SIZE,
-            seed=42,
-            shuffle=True,
+            shuffle=False,
             class_mode="raw",
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
@@ -359,8 +366,7 @@ class ai_plantes :
             x_col="repo",
             y_col=self.columns,
             batch_size=self.BATCH_SIZE,
-            seed=42,
-            shuffle=True,
+            shuffle=False,
             class_mode="raw",
             target_size=(self.IMAGE_SIZE,self.IMAGE_SIZE),
         )
@@ -370,7 +376,7 @@ class ai_plantes :
     
     def fit(self,epochs=10):
         callbacks = [
-            keras.callbacks.EarlyStopping(monitor="val_loss", patience=10),
+            keras.callbacks.EarlyStopping(monitor="val_loss", patience=10,restore_best_weights=True),
             keras.callbacks.ModelCheckpoint(
                 filepath="model_checkpoint",
                 save_weights_only=True,
@@ -391,16 +397,15 @@ class ai_plantes :
             validation_data=self.val_generator,
             epochs=epochs,
             verbose=1,
-            steps_per_epoch=self.train_generator.n / self.BATCH_SIZE,
+            steps_per_epoch=self.train_generator.n/self.BATCH_SIZE,
             callbacks=[callbacks],
             #class_weight=self.class_weights if (self.out_put == "softmax" ) else None
         )
   
 
-        preds = self.model.predict(self.test_generator, steps=self.test_generator.n / self.BATCH_SIZE)
+        self.preds = self.model.predict(self.test_generator, steps= len(self.test_generator) )
 
-        return history, preds
-
+        return history, self.preds
 
     def print_confusion_matrix(self,
         confusion_matrix, axes, class_label, class_names, fontsize=14
@@ -427,15 +432,11 @@ class ai_plantes :
         axes.set_title("Confusion Matrix for the class - " + class_label)
 
 
-    def print_multilabel_confusion_matrix(self,y_preds):
-        df = pd.read_csv("Test_labels.csv")
-
-        df = pd.get_dummies(
-            df, columns=["bord", "phyllotaxie", "typeFeuille", "ligneux"], drop_first=True
-        )
-        y_preds = y_preds.round().astype(np.uint8)
-        y_test = np.array(df.iloc[:, 3:])
-        y_test.shape, y_preds.shape
+    def print_multilabel_confusion_matrix(self):
+        
+        y_preds = np.rint(self.preds)#.round().astype(np.uint8)
+        y_test = np.array(self.test_df[self.columns])
+        print(classification_report(y_preds,y_test,zero_division=1))
         confusion_matrix = multilabel_confusion_matrix(y_test, y_preds)
         labels = ["bord_lisse", "phyllotaxie_oppose", "typeFeuille_simple", "ligneux_oui"]
         fig, ax = plt.subplots(2, 2, figsize=(10, 7))
@@ -444,3 +445,31 @@ class ai_plantes :
 
         fig.tight_layout()
         plt.show()
+
+
+    def get_roc_curve(self):
+        #this function will plot the ROC curve for each class 
+        labels= self.columns
+        auc_roc_vals = []
+        for i in range(len(labels)):
+            try:
+                gt = self.test_generator.labels[:, i]
+                pred = self.preds [:, i]
+                auc_roc = roc_auc_score(gt, pred)
+                auc_roc_vals.append(auc_roc)
+                fpr_rf, tpr_rf, _ = roc_curve(gt, pred)
+                plt.figure(1, figsize=(12, 10))
+                plt.plot([0, 1], [0, 1], 'k--')
+                plt.plot(fpr_rf, tpr_rf,
+                        label=labels[i] + " (" + str(round(auc_roc, 3)) + ")")
+                plt.xlabel('False positive rate')
+                plt.ylabel('True positive rate')
+                plt.title('ROC curve')
+                plt.legend(loc='best')
+            except:
+                print(
+                    f"Error in generating ROC curve for {labels[i]}. "
+                    f"Dataset lacks enough examples."
+                )
+        plt.show()
+        return auc_roc_vals
