@@ -266,8 +266,9 @@ class ai_plantes :
         ##################################################################
 
         #compute loss:
-        freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
-        self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
+        if self.out_put=="sigmoid":
+            freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
+            self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         ##################################################################
 
         # split train validation data
