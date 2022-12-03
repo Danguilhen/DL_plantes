@@ -60,10 +60,10 @@ class ai_plantes :
             )
             total_light = binary_mask_light.sum()
         binary_mask = binary_mask_light
-        #binary_mask_cleared = clear_border(
-        #    skimage.morphology.remove_small_holes(binary_mask, 300))
-        #if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
-        #    binary_mask = binary_mask_cleared
+        binary_mask_cleared = clear_border(
+            skimage.morphology.remove_small_holes(binary_mask, 300))
+        if binary_mask_cleared.sum() > binary_mask.sum() * 0.3:
+            binary_mask = binary_mask_cleared
         labeled_image, _ = skimage.measure.label(binary_mask, return_num=True)
         image[labeled_image == 0] = 255
         img = self.croper(image)
@@ -379,7 +379,7 @@ class ai_plantes :
                 save_best_only=True,
             ),
             ModelCheckpoint(
-                "model.hdf5", save_best_only=True, verbose=1, monitor="val_loss", mode="min"
+                "model.hdf5", save_best_only=True, verbose=0, monitor="val_loss", mode="min"
             ),
             ReduceLROnPlateau(
                 monitor="val_loss", factor=0.2, patience=5, min_lr=0.000001, verbose=1
