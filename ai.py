@@ -89,7 +89,7 @@ class ai_plantes :
 
 
     def create_model(self,use_pre_train=True ,architecture=DenseNet121
-                ,sorce="DenseNet121.h5"):
+                ,sorce="DenseNet121.h5",balance=True,weights=None):
         """
             This function will cearte a model with a model with a given architecture.
 
@@ -102,11 +102,16 @@ class ai_plantes :
 
             sorce : string 
                 The path of your pretrained weights 
+            balance : bool
+                to belance the clases for sigmoid output
+            weights : string
+                With or without wights from the orginal model (or you can choose "imagenet" )
+
             Returns
             -------
-            no thing
+            No thing
         """
-        The_model = architecture(#EfficientNetB4(
+        The_model = architecture(#EfficientNetB4( 
             weights=None, include_top=False, input_shape=(self.IMAGE_SIZE, self.IMAGE_SIZE, 3)
         )
         x = The_model.output
@@ -117,16 +122,16 @@ class ai_plantes :
         x= Dense(512,activation='relu')(x) 
         x= BatchNormalization()(x)
         x= Dropout(0.5)(x)
-        preds=Dense(4,activation='softmax')(x)
-        model = Model(inputs=The_model.input, outputs=preds)
-        model.load_weights(sorce) #here are the weights 
-        if self.out_put =="sigmoid":
-            loss=self.get_weighted_loss(self.pos_weights , self.neg_weights)
-        else:
-            loss="CategoricalCrossentropy"
+        if sorce =="DenseNet121.h5": #pretrained model on plants 
+            preds=Dense(4,activation='softmax')(x)
+            model = Model(inputs=The_model.input, outputs=preds)
+            model.load_weights(sorce) #here are the weights 
+            predictions = Dense(len(self.columns), activation=self.out_put)(model.layers[-2].output)
+            self.model = Model(inputs=model.input, outputs=predictions)
+        else :
+            predictions = Dense(len(self.columns), activation=self.out_put)(x)
+            self.model = Model(inputs=The_model.input, outputs=predictions)
 
-        predictions = Dense(len(self.columns), activation=self.out_put)(model.layers[-2].output)
-        self.model = Model(inputs=model.input, outputs=predictions)
         if use_pre_train:
             for layer in self.model.layers[:-8]:
                 layer.trainable=False
@@ -134,6 +139,11 @@ class ai_plantes :
                 layer.trainable=True
     
 
+        loss="binary_crossentropy"
+        if (self.out_put =="sigmoid")&(balance):
+            loss=self.get_weighted_loss(self.pos_weights , self.neg_weights)
+        elif self.out_put =="softmax" :
+            loss="CategoricalCrossentropy"
         self.model.compile(optimizer="adam",loss=loss,#tfa.losses.SigmoidFocalCrossEntropy(),
         metrics=["accuracy",tf.keras.metrics.AUC(),tf.keras.metrics.Precision(),tf.keras.metrics.Recall()],
     )
@@ -233,7 +243,6 @@ class ai_plantes :
             no thing
 
         """
-
         # Data Frame prepreprations 
         #Importaning Data
         print("We are going to preporcess the data ...")
@@ -263,12 +272,6 @@ class ai_plantes :
             # for Mac OS useres to read files
             self.df.repo=self.df.repo.str.replace("\\","/",regex=False)
             self.test_df.repo=self.test_df.repo.str.replace("\\","/",regex=False)
-        ##################################################################
-
-        #compute loss:
-        if self.out_put=="sigmoid":
-            freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
-            self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         ##################################################################
 
         # split train validation data
@@ -318,6 +321,12 @@ class ai_plantes :
             target_size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
         )
         print("The val_generator is ready. ")
+        ##################################################################
+
+        #compute loss:
+        if self.out_put=="sigmoid":
+            freq_pos, freq_neg = self.compute_class_freqs(self.train_generator.labels)
+            self.pos_weights,self.neg_weights = tf.cast(freq_neg, tf.float32), tf.cast(freq_pos, tf.float32)
         ##################################################################
 
         self.test_generator = self.datagen_aug.flow_from_dataframe(
