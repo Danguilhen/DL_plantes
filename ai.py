@@ -271,7 +271,7 @@ class ai_plantes:
         data_file="Train_labels.csv",
         isMacOs=False,
         out_put="sigmoid",
-        balance_data=False,
+        min_sample=False,
     ):
         """
         This function will import dataFrames, split the data, tranforme the data and
@@ -287,7 +287,7 @@ class ai_plantes:
 
         out_put : string
             What kind of output sigmoid or softmax
-        balance_data : bool
+        min_sample : bool
             It will blance the data in equal distubatioin
         Returns
         -------
@@ -320,7 +320,7 @@ class ai_plantes:
             + self.test_df.ligneux
         )
         self.columns = ["bord", "phyllotaxie", "typeFeuille", "ligneux"]
-        if balance_data:
+        if min_sample:
             print("\n\nThe distubation(Disproportionate Sampling methode) is: ")
             uni = np.unique(self.df.labels, return_counts=True)
             m = [
